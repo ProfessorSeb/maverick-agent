@@ -7,19 +7,21 @@ import (
 	"strings"
 )
 
-// WriteConfig generates an agentgateway YAML config file from the pushed config.
-// The config format matches agentgateway's NestedRawConfig structure which requires
-// a top-level "config:" wrapper with "binds:" containing listeners and routes.
+// WriteConfig generates agentgateway config files from the pushed config.
+//
+// The agentgateway -f flag expects a NestedRawConfig format (top-level "config:" key).
+// Listener/route/backend definitions use the LocalConfig format loaded via localXdsPath.
+// So we write two files:
+//   - agentgateway.yaml:  NestedRawConfig pointing to the local config
+//   - local.yaml:         LocalConfig with binds/listeners/routes/backends
 func WriteConfig(configDir string, cfg ConfigPayload) error {
+	localPath := filepath.Join(configDir, "local.yaml")
 	configPath := filepath.Join(configDir, "agentgateway.yaml")
 
+	// Write the local config (LocalConfig format with binds)
 	var b strings.Builder
-
-	b.WriteString("config:\n")
-
-	// Binds section (each listener becomes a bind)
 	if len(cfg.Listeners) > 0 {
-		b.WriteString("  binds:\n")
+		b.WriteString("binds:\n")
 		for _, l := range cfg.Listeners {
 			if !l.IsEnabled {
 				continue
@@ -28,15 +30,15 @@ func WriteConfig(configDir string, cfg ConfigPayload) error {
 			if port == "" {
 				port = "8080"
 			}
-			b.WriteString(fmt.Sprintf("  - port: %s\n", port))
-			b.WriteString("    listeners:\n")
-			b.WriteString(fmt.Sprintf("    - name: %s\n", l.Name))
-			b.WriteString("      protocol: HTTP\n")
+			b.WriteString(fmt.Sprintf("- port: %s\n", port))
+			b.WriteString("  listeners:\n")
+			b.WriteString(fmt.Sprintf("  - name: %s\n", l.Name))
+			b.WriteString("    protocol: HTTP\n")
 
 			// Find routes for this listener
 			listenerRoutes := filterRoutes(cfg.Routes, l.ID)
 			if len(listenerRoutes) > 0 {
-				b.WriteString("      routes:\n")
+				b.WriteString("    routes:\n")
 				for _, r := range listenerRoutes {
 					if !r.IsEnabled {
 						continue
@@ -45,10 +47,10 @@ func WriteConfig(configDir string, cfg ConfigPayload) error {
 					// Find backends for this route
 					routeBackends := filterBackends(cfg.Backends, r.ID)
 					if len(routeBackends) > 0 {
-						b.WriteString("      - backends:\n")
-						b.WriteString("        - ai:\n")
-						b.WriteString("            groups:\n")
-						b.WriteString("            - providers:\n")
+						b.WriteString("    - backends:\n")
+						b.WriteString("      - ai:\n")
+						b.WriteString("          groups:\n")
+						b.WriteString("          - providers:\n")
 						for _, be := range routeBackends {
 							if !be.IsEnabled {
 								continue
@@ -61,7 +63,13 @@ func WriteConfig(configDir string, cfg ConfigPayload) error {
 		}
 	}
 
-	if err := os.WriteFile(configPath, []byte(b.String()), 0640); err != nil {
+	if err := os.WriteFile(localPath, []byte(b.String()), 0640); err != nil {
+		return fmt.Errorf("write local config file: %w", err)
+	}
+
+	// Write the main config (NestedRawConfig format) pointing to the local config
+	mainCfg := fmt.Sprintf("config:\n  localXdsPath: %s\n", localPath)
+	if err := os.WriteFile(configPath, []byte(mainCfg), 0640); err != nil {
 		return fmt.Errorf("write config file: %w", err)
 	}
 	return nil
@@ -82,19 +90,19 @@ func writeBackendProvider(b *strings.Builder, be BackendConfig) {
 		providerType = "anthropic"
 	}
 
-	b.WriteString(fmt.Sprintf("              - name: %s\n", be.Name))
-	b.WriteString("                provider:\n")
-	b.WriteString(fmt.Sprintf("                  %s: {}\n", providerType))
+	b.WriteString(fmt.Sprintf("            - name: %s\n", be.Name))
+	b.WriteString("              provider:\n")
+	b.WriteString(fmt.Sprintf("                %s: {}\n", providerType))
 
 	if be.APIKeyRef != "" {
-		b.WriteString("                policies:\n")
-		b.WriteString("                  backendAuth:\n")
-		b.WriteString(fmt.Sprintf("                    key: %s\n", be.APIKeyRef))
+		b.WriteString("              policies:\n")
+		b.WriteString("                backendAuth:\n")
+		b.WriteString(fmt.Sprintf("                  key: %s\n", be.APIKeyRef))
 	}
 
 	if be.Model != "" {
-		b.WriteString("                model:\n")
-		b.WriteString(fmt.Sprintf("                  name: %s\n", be.Model))
+		b.WriteString("              model:\n")
+		b.WriteString(fmt.Sprintf("                name: %s\n", be.Model))
 	}
 }
 
