@@ -30,7 +30,7 @@ func (p *ProcessManager) Start(binaryPath, configPath string) {
 		return
 	}
 
-	cmd := exec.Command(binaryPath, "--config", configPath)
+	cmd := exec.Command(binaryPath, "-f", configPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
