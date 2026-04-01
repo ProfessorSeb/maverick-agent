@@ -26,7 +26,7 @@ echo "Detected platform: ${OS}/${ARCH}"
 
 # Find latest agent release tag
 LATEST_TAG="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases" \
-  | grep -o '"tag_name": *"[^"]*-agent"' \
+  | grep -o '"tag_name": *"[^"]*"' \
   | head -1 \
   | sed 's/.*"tag_name": *"//;s/"//')"
 
