@@ -87,6 +87,102 @@ maverick-agent \
 - **API keys stay on-prem** — LLM provider keys never leave your infrastructure
 - **Auto-reconnect** with exponential backoff on disconnect
 
+#### Secure Connection Flow
+
+The following diagram shows how the data plane agent establishes and maintains a secure connection to the Maverick control plane:
+
+```mermaid
+sequenceDiagram
+    participant App as Your Apps
+    participant AGW as agentgateway<br/>(localhost:8080)
+    participant Agent as maverick-agent
+    participant CP as Maverick Control Plane<br/>(wss://maverick.maniak.io)
+    participant LLM as LLM Providers<br/>(OpenAI, Anthropic, etc.)
+
+    Note over Agent,CP: 1. Secure Tunnel Establishment
+    Agent->>Agent: Load bearer token (--token flag)
+    Agent->>Agent: Validate URL uses wss:// (TLS)
+    Agent->>CP: WebSocket Dial (wss://) + TLS Handshake<br/>Authorization: Bearer <token>
+    CP->>CP: Validate token (bcrypt hash check)
+    CP-->>Agent: 101 Switching Protocols (WebSocket Upgrade)
+    Agent->>CP: {"type": "ready"}
+
+    Note over Agent,CP: 2. Configuration Push (control plane → agent)
+    CP->>Agent: {"type": "config_push", "payload": {listeners, routes, backends}}
+    Agent->>Agent: Translate JSON config → YAML<br/>Write to ~/.maverick-agent/agentgateway.yaml (mode 0640)
+    Note right of Agent: API keys are env var references<br/>e.g. $OPENAI_API_KEY<br/>Keys never leave your infra
+
+    Note over AGW,Agent: 3. Data Plane Startup
+    Agent->>AGW: Start agentgateway subprocess<br/>with -f agentgateway.yaml
+    AGW->>AGW: Resolve $API_KEY env vars locally
+
+    Note over App,LLM: 4. AI Traffic (stays on-prem)
+    App->>AGW: POST /v1/chat/completions
+    AGW->>LLM: Forward request with API key
+    LLM-->>AGW: Response
+    AGW-->>App: Response
+
+    Note over Agent,CP: 5. Ongoing Health Reporting
+    loop Every 30 seconds
+        Agent->>CP: {"type": "heartbeat", "payload": {status, uptime, location}}
+    end
+
+    Note over Agent,CP: 6. Live Config Updates
+    CP->>Agent: {"type": "config_update", "payload": {updated config}}
+    Agent->>Agent: Write updated YAML (mode 0640)
+    Agent->>AGW: SIGTERM → restart with new config
+
+    Note over Agent,CP: 7. Reconnection (on disconnect)
+    Agent--xCP: Connection lost
+    Agent->>Agent: Exponential backoff (1s → 2s → 4s ... max 60s)
+    Agent->>CP: Reconnect with same bearer token
+```
+
+#### Security Architecture Summary
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                  YOUR INFRASTRUCTURE                     │
+│                                                          │
+│  ┌──────────┐    ┌──────────────┐    ┌───────────────┐  │
+│  │ Your Apps │───▶│agentgateway  │───▶│ LLM Providers │  │
+│  │          │◀───│ :8080        │◀───│ (OpenAI, etc.)│  │
+│  └──────────┘    └──────────────┘    └───────────────┘  │
+│                         ▲                                │
+│                         │ managed by                     │
+│                  ┌──────┴───────┐                        │
+│                  │maverick-agent│                        │
+│                  └──────┬───────┘                        │
+│                         │                                │
+│    API keys ($ENV)      │ outbound wss:// only           │
+│    stay here ───────────┤ Bearer token auth              │
+│                         │ TLS encrypted                  │
+├─────────────────────────┼───────────────────────────────┤
+│          FIREWALL       │ no inbound rules needed        │
+├─────────────────────────┼───────────────────────────────┤
+│                         ▼                                │
+│              ┌─────────────────────┐                     │
+│              │ Maverick Control    │                     │
+│              │ Plane (SaaS)       │                     │
+│              │ - config management │                     │
+│              │ - token validation  │                     │
+│              │ - health dashboard  │                     │
+│              └─────────────────────┘                     │
+└─────────────────────────────────────────────────────────┘
+```
+
+| Layer | Mechanism | Details |
+|-------|-----------|---------|
+| **Transport** | TLS 1.2+ (wss://) | Go default TLS with system CA validation |
+| **Authentication** | Bearer token | One-time registration token, bcrypt-hashed server-side |
+| **Token management** | Rotatable | Rotate/revoke from Maverick dashboard |
+| **API key isolation** | Env var references | Control plane sends `$OPENAI_API_KEY`, never the actual key |
+| **Config file perms** | `0640` | Owner read/write, group read, others none |
+| **Config dir perms** | `0750` | Owner rwx, group rx, others none |
+| **Connection model** | Outbound only | No inbound firewall rules or open ports required |
+| **Reconnection** | Exponential backoff | 1s → 2s → 4s → ... → 60s max |
+| **Process isolation** | Managed subprocess | agentgateway runs as a child process with SIGTERM/SIGKILL lifecycle |
+
 ## License
 
 Apache 2.0
