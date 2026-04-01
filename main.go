@@ -17,7 +17,7 @@ var version = "dev"
 
 func main() {
 	token := flag.String("token", "", "Agent registration token (required)")
-	controlPlane := flag.String("control-plane", "wss://api.maverick.maniak.io/tunnel", "Control plane WebSocket URL")
+	controlPlane := flag.String("control-plane", "wss://maverick.maniak.io/tunnel", "Control plane WebSocket URL")
 	gatewayPath := flag.String("agentgateway-path", "", "Path to agentgateway binary (default: auto-download)")
 	configDir := flag.String("config-dir", defaultConfigDir(), "Directory for agentgateway config files")
 	showVersion := flag.Bool("version", false, "Print version and exit")
