@@ -16,7 +16,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/maverick-agent
+  IMAGE_NAME: professorseb/maverick-agent
 
 jobs:
   build:
