@@ -20,7 +20,10 @@ func WriteConfig(configDir string, cfg ConfigPayload) error {
 
 	// Write the local config (LocalConfig format with binds)
 	var b strings.Builder
-	if len(cfg.Listeners) > 0 {
+	if len(cfg.Listeners) == 0 {
+		// Write a valid empty config so agentgateway doesn't fail parsing null
+		b.WriteString("binds: []\n")
+	} else {
 		b.WriteString("binds:\n")
 		for _, l := range cfg.Listeners {
 			if !l.IsEnabled {
